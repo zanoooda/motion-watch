@@ -1,0 +1,1 @@
+It should run in background and detect motion from built in camera and if motion detected - save images locally and send telegram message/notification.
