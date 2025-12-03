@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: motion-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - motion-net
+
+  streamer:
+    build:
+      context: ./streamer
+    container_name: motion-streamer
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - VIDEO_SOURCE=/app/test_video.mp4
+      - BUFFER_SIZE=300
+    volumes:
+      - ./test_data:/app/test_data:ro
+    networks:
+      - motion-net
+    restart: unless-stopped
+
+  detector:
+    build:
+      context: ./detector
+    container_name: motion-detector
+    depends_on:
+      - redis
+      - streamer
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    networks:
+      - motion-net
+    restart: unless-stopped
+
+  writer:
+    build:
+      context: ./writer
+    container_name: motion-writer
+    depends_on:
+      - redis
+      - streamer
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - OUTPUT_DIR=/data
+      - CHUNK_DURATION=10
+    volumes:
+      - ./data:/data
+    networks:
+      - motion-net
+    restart: unless-stopped
+
+networks:
+  motion-net:
+    driver: bridge
+
+volumes:
+  video-data:
