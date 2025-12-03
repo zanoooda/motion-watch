@@ -1,0 +1,138 @@
+services:
+  # PostgreSQL database for storing camera configs, events
+  postgres:
+    image: postgres:15-alpine
+    container_name: motion-watch-db
+    environment:
+      POSTGRES_DB: motionwatch
+      POSTGRES_USER: motionwatch
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-motionwatch123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U motionwatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis for event queues and pub/sub
+  redis:
+    image: redis:7-alpine
+    container_name: motion-watch-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Backend API (FastAPI)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: motion-watch-backend
+    environment:
+      DATABASE_URL: postgresql://motionwatch:${DB_PASSWORD:-motionwatch123}@postgres:5432/motionwatch
+      REDIS_URL: redis://redis:6379
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      STORAGE_PATH: /recordings
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+    volumes:
+      - recordings:/recordings
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Motion detector worker
+  motion-detector:
+    build:
+      context: ./motion-detector
+      dockerfile: Dockerfile
+    container_name: motion-watch-detector
+    environment:
+      REDIS_URL: redis://redis:6379
+      BACKEND_URL: http://backend:8000
+      STORAGE_PATH: /recordings
+    volumes:
+      - recordings:/recordings
+    devices:
+      - /dev/video0:/dev/video0
+    group_add:
+      - video
+    depends_on:
+      - redis
+      - backend
+    restart: unless-stopped
+
+  # Stream recorder (FFmpeg based)
+  recorder:
+    build:
+      context: ./recorder
+      dockerfile: Dockerfile
+    container_name: motion-watch-recorder
+    environment:
+      REDIS_URL: redis://redis:6379
+      BACKEND_URL: http://backend:8000
+      STORAGE_PATH: /recordings
+      SEGMENT_DURATION: ${SEGMENT_DURATION:-10}
+    volumes:
+      - recordings:/recordings
+    devices:
+      - /dev/video0:/dev/video0
+    group_add:
+      - video
+    depends_on:
+      - redis
+      - backend
+    restart: unless-stopped
+
+  # Telegram notifier
+  notifier:
+    build:
+      context: ./notifier
+      dockerfile: Dockerfile
+    container_name: motion-watch-notifier
+    environment:
+      REDIS_URL: redis://redis:6379
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      STORAGE_PATH: /recordings
+    volumes:
+      - recordings:/recordings:ro
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Frontend (React)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: motion-watch-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  recordings:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${RECORDINGS_PATH:-./recordings}
