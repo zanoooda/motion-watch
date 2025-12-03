@@ -137,6 +137,23 @@ class MotionDetector:
                 time.sleep(reconnect_delay)
                 reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
     
+    def _generate_test_frame(self, frame_counter):
+        """Generate test pattern frame when camera is unavailable"""
+        width, height = 640, 480
+        frame = np.zeros((height, width, 3), dtype=np.uint8)
+        
+        # Draw moving rectangle
+        x = int((frame_counter * 2) % width)
+        y = height // 2 - 50
+        cv2.rectangle(frame, (x, y), (x + 100, y + 100), (0, 255, 0), -1)
+        
+        # Add text
+        text = f"Test Pattern - Camera {self.camera_id}"
+        cv2.putText(frame, text, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        cv2.putText(frame, f"Frame: {frame_counter}", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 1)
+        
+        return frame
+    
     def _ffmpeg_capture_loop(self, reconnect_delay, max_reconnect_delay):
         """Capture using FFmpeg for local camera devices"""
         width, height = 640, 480
@@ -164,7 +181,14 @@ class MotionDetector:
             )
         except Exception as e:
             logger.error(f"Failed to start FFmpeg for camera {self.camera_id}: {e}")
-            time.sleep(reconnect_delay)
+            logger.info(f"Falling back to test pattern for camera {self.camera_id}")
+            # Fall back to test pattern
+            frame_counter = 0
+            while self.running:
+                frame = self._generate_test_frame(frame_counter)
+                self._process_frame(frame)
+                frame_counter += 1
+                time.sleep(0.1)  # 10 FPS
             return
         
         frame_size = width * height * 3
@@ -182,16 +206,21 @@ class MotionDetector:
         stderr_thread.start()
         
         consecutive_errors = 0
+        frame_counter = 0
         try:
             while self.running:
                 raw_frame = process.stdout.read(frame_size)
                 if len(raw_frame) != frame_size:
                     consecutive_errors += 1
-                    if consecutive_errors > 30:
-                        logger.warning(f"Too many incomplete frames from camera {self.camera_id}")
-                        # Log FFmpeg errors
-                        if process.poll() is not None:
-                            logger.error(f"FFmpeg process died for camera {self.camera_id}")
+                    if consecutive_errors > 10:
+                        logger.warning(f"FFmpeg failed for camera {self.camera_id}, using test pattern")
+                        # Fall back to test pattern
+                        process.terminate()
+                        while self.running:
+                            frame = self._generate_test_frame(frame_counter)
+                            self._process_frame(frame)
+                            frame_counter += 1
+                            time.sleep(0.1)  # 10 FPS
                         break
                     continue
                 
