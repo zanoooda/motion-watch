@@ -39,10 +39,7 @@ services:
     environment:
       DATABASE_URL: postgresql://motionwatch:${DB_PASSWORD:-motionwatch123}@postgres:5432/motionwatch
       REDIS_URL: redis://redis:6379
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       STORAGE_PATH: /recordings
-      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
     volumes:
       - recordings:/recordings
       - ./backend:/app
@@ -61,14 +58,14 @@ services:
       context: ./motion-detector
       dockerfile: Dockerfile
     container_name: motion-watch-detector
+    privileged: true
     environment:
       REDIS_URL: redis://redis:6379
       BACKEND_URL: http://backend:8000
       STORAGE_PATH: /recordings
     volumes:
       - recordings:/recordings
-    devices:
-      - /dev/video0:/dev/video0
+      - /dev:/dev
     group_add:
       - video
     depends_on:
@@ -106,8 +103,7 @@ services:
     container_name: motion-watch-notifier
     environment:
       REDIS_URL: redis://redis:6379
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      BACKEND_URL: http://backend:8000
       STORAGE_PATH: /recordings
     volumes:
       - recordings:/recordings:ro

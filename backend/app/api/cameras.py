@@ -102,6 +102,26 @@ async def delete_camera(camera_id: int, db: AsyncSession = Depends(get_db)):
     await db.delete(camera)
 
 
+@router.get("/{camera_id}/snapshot")
+async def get_camera_snapshot(camera_id: int, db: AsyncSession = Depends(get_db)):
+    """Get camera snapshot from Redis cache"""
+    from app.core.redis import get_frame
+    
+    # Get cached frame from Redis
+    frame_data = await get_frame(camera_id)
+    
+    if not frame_data:
+        from fastapi.responses import Response
+        # Return 1x1 transparent PNG if no frame available
+        return Response(
+            content=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82',
+            media_type="image/png"
+        )
+    
+    from fastapi.responses import Response
+    return Response(content=frame_data, media_type="image/jpeg")
+
+
 @router.post("/{camera_id}/control")
 async def control_camera(
     camera_id: int, 
@@ -116,14 +136,13 @@ async def control_camera(
     
     action = request.action
     
-    # Update camera status based on action
+    # Update camera settings based on action
     if action == "start_recording":
-        camera.recording_enabled = True
-        camera.status = CameraStatus.RECORDING
+        # Recording is handled by recorder service, just send command
+        pass
     elif action == "stop_recording":
-        camera.recording_enabled = False
-        if camera.status == CameraStatus.RECORDING:
-            camera.status = CameraStatus.ONLINE
+        # Recording is handled by recorder service, just send command
+        pass
     elif action == "start_detection":
         camera.motion_detection_enabled = True
     elif action == "stop_detection":

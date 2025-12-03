@@ -57,7 +57,7 @@ class MotionDetector:
         camera_id: int,
         url: str,
         sensitivity: float = 25.0,
-        min_area: int = 500,
+        min_area: int = 50,  # Very small area = extremely sensitive
         cooldown: int = 30,
         detection_zones: Optional[list] = None,
         save_snapshots: bool = True,
@@ -85,17 +85,17 @@ class MotionDetector:
         self.last_frame = None  # For live view
         self.recording_clip = False  # Currently recording clip
         
-        # Background subtractor - MOG2 is efficient on CPU
+        # Background subtractor - MOG2 optimized for HIGH sensitivity
         self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
-            history=500,
-            varThreshold=16,
+            history=50,  # Very short history for fast adaptation
+            varThreshold=5,  # Very low threshold = extremely sensitive
             detectShadows=False
         )
         
         # Frame processing settings
         self.process_width = 320  # Process at lower resolution
         self.process_height = 240
-        self.skip_frames = 2  # Process every Nth frame
+        self.skip_frames = 0  # Process every frame for maximum sensitivity
         self.frame_count = 0
     
     def start(self):
@@ -126,7 +126,7 @@ class MotionDetector:
         
         while self.running:
             try:
-                # Use FFmpeg for local devices, OpenCV for RTSP
+                # Use FFmpeg for all local devices - more reliable in Docker
                 if self.url.startswith('/dev/video'):
                     self._ffmpeg_capture_loop(reconnect_delay, max_reconnect_delay)
                 else:
@@ -144,9 +144,8 @@ class MotionDetector:
         cmd = [
             'ffmpeg',
             '-f', 'v4l2',
-            '-input_format', 'yuyv422',  # More compatible than mjpeg
             '-video_size', f'{width}x{height}',
-            '-framerate', '15',
+            '-framerate', '10',
             '-i', self.url,
             '-f', 'rawvideo',
             '-pix_fmt', 'bgr24',
@@ -171,14 +170,28 @@ class MotionDetector:
         frame_size = width * height * 3
         logger.info(f"Connected to camera {self.camera_id} via FFmpeg")
         
+        # Read stderr in background to avoid blocking
+        def log_stderr():
+            for line in process.stderr:
+                line_str = line.decode('utf-8', errors='ignore').strip()
+                if line_str and 'frame=' not in line_str:  # Skip progress lines
+                    logger.debug(f"FFmpeg [{self.camera_id}]: {line_str}")
+        
+        import threading
+        stderr_thread = threading.Thread(target=log_stderr, daemon=True)
+        stderr_thread.start()
+        
         consecutive_errors = 0
         try:
             while self.running:
                 raw_frame = process.stdout.read(frame_size)
                 if len(raw_frame) != frame_size:
                     consecutive_errors += 1
-                    if consecutive_errors > 5:
+                    if consecutive_errors > 30:
                         logger.warning(f"Too many incomplete frames from camera {self.camera_id}")
+                        # Log FFmpeg errors
+                        if process.poll() is not None:
+                            logger.error(f"FFmpeg process died for camera {self.camera_id}")
                         break
                     continue
                 
@@ -192,6 +205,55 @@ class MotionDetector:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process.kill()
+    
+    def _opencv_local_capture_loop(self, reconnect_delay, max_reconnect_delay):
+        """Capture using OpenCV for local camera devices"""
+        # Use device path directly
+        device_path = self.url
+        
+        # Try different backends for Docker compatibility
+        backends = [cv2.CAP_V4L2, cv2.CAP_ANY]
+        self.capture = None
+        
+        for backend in backends:
+            self.capture = cv2.VideoCapture(device_path, backend)
+            if self.capture.isOpened():
+                logger.info(f"Opened {device_path} with backend {backend}")
+                break
+            self.capture.release()
+        
+        if not self.capture or not self.capture.isOpened():
+            logger.error(f"Failed to open device {device_path} for camera {self.camera_id}")
+            time.sleep(reconnect_delay)
+            return
+        
+        # Set camera properties for better performance
+        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.capture.set(cv2.CAP_PROP_FPS, 15)
+        self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize latency
+        
+        logger.info(f"Connected to camera {self.camera_id} ({device_path}) via OpenCV")
+        
+        consecutive_failures = 0
+        try:
+            while self.running and self.capture.isOpened():
+                ret, frame = self.capture.read()
+                
+                if not ret:
+                    consecutive_failures += 1
+                    if consecutive_failures > 10:
+                        logger.warning(f"Too many read failures from camera {self.camera_id}")
+                        break
+                    time.sleep(0.1)
+                    continue
+                
+                consecutive_failures = 0
+                self._process_frame(frame)
+        finally:
+            if self.capture:
+                self.capture.release()
+                self.capture = None
     
     def _opencv_capture_loop(self, reconnect_delay, max_reconnect_delay):
         """Capture using OpenCV for RTSP streams"""
@@ -224,9 +286,11 @@ class MotionDetector:
         
         # Store last frame for live view (cache in Redis)
         self.last_frame = frame
+        
+        # Cache every frame for live view (faster updates)
         self._cache_snapshot(frame)
         
-        # Skip frames for performance
+        # Skip frames for motion detection (performance)
         if self.frame_count % self.skip_frames != 0:
             return
         
@@ -265,12 +329,12 @@ class MotionDetector:
     def _cache_snapshot(self, frame: np.ndarray):
         """Cache current frame in Redis for live view"""
         try:
-            # Encode frame as JPEG
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            # Encode frame as JPEG with lower quality for speed
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
             
-            # Cache in Redis with 2 second expiry
+            # Cache in Redis with 1 second expiry for live view
             redis_client = get_sync_redis()
-            redis_client.setex(f"snapshot:{self.camera_id}", 2, buffer.tobytes())
+            redis_client.setex(f"snapshot:{self.camera_id}", 1, buffer.tobytes())
         except Exception as e:
             # Don't log every frame to avoid spam
             pass
@@ -513,8 +577,8 @@ async def handle_control_message(message: dict, detectors: Dict[int, MotionDetec
                         camera_id=cam["id"],
                         url=cam["url"],
                         sensitivity=cam.get("motion_sensitivity", 25.0),
-                        min_area=cam.get("motion_min_area", 500),
-                        cooldown=cam.get("motion_cooldown", 30)
+                        min_area=cam.get("motion_min_area", 50),
+                        cooldown=cam.get("motion_cooldown", 30),
                     )
                     detectors[camera_id] = detector
                     detector.start()
@@ -527,8 +591,22 @@ async def handle_control_message(message: dict, detectors: Dict[int, MotionDetec
     elif action == "camera_added":
         url = message.get("url")
         if url:
-            detector = MotionDetector(camera_id=camera_id, url=url)
-            detectors[camera_id] = detector
+            # Fetch full camera info to get all settings
+            cameras = await fetch_cameras()
+            for cam in cameras:
+                if cam["id"] == camera_id:
+                    detector = MotionDetector(
+                        camera_id=cam["id"],
+                        url=cam["url"],
+                        sensitivity=cam.get("motion_sensitivity", 25.0),
+                        min_area=cam.get("motion_min_area", 500),
+                        cooldown=cam.get("motion_cooldown", 30)
+                    )
+                    detectors[camera_id] = detector
+                    # Auto-start if motion detection enabled
+                    if cam.get("motion_detection_enabled", True):
+                        detector.start()
+                    break
     
     elif action == "camera_deleted":
         if camera_id in detectors:
@@ -640,7 +718,7 @@ async def init_detectors() -> Dict[int, MotionDetector]:
                 camera_id=camera["id"],
                 url=camera["url"],
                 sensitivity=camera.get("motion_sensitivity", 25.0),
-                min_area=camera.get("motion_min_area", 500),
+                min_area=camera.get("motion_min_area", 50),
                 cooldown=camera.get("motion_cooldown", 30),
                 save_snapshots=camera.get("save_snapshots", True),
                 save_video_clips=camera.get("save_video_clips", False),

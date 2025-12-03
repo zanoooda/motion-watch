@@ -36,3 +36,10 @@ async def add_to_queue(queue_name: str, message: dict):
     """Add message to Redis queue"""
     import json
     await redis_client.rpush(queue_name, json.dumps(message))
+
+
+async def get_frame(camera_id: int) -> bytes | None:
+    """Get latest frame from Redis cache for camera"""
+    key = f"camera:{camera_id}:frame"
+    frame_data = await redis_binary_client.get(key)
+    return frame_data

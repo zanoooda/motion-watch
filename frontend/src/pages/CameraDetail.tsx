@@ -120,13 +120,19 @@ function CameraDetail() {
             </div>
             
             {/* Controls overlay */}
-            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-4">
-              <div className="flex items-center justify-between">
+            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-4 z-10 pointer-events-none">
+              <div className="flex items-center justify-between pointer-events-auto">
                 <div className="flex items-center space-x-4">
                   <button
-                    onClick={() => setIsLive(!isLive)}
-                    className={`px-3 py-1 rounded text-sm font-medium ${
-                      isLive ? 'bg-red-600 text-white' : 'bg-white/20 text-white'
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      console.log('Button clicked! Current isLive:', isLive)
+                      setIsLive(prev => !prev)
+                    }}
+                    className={`px-4 py-2 rounded text-sm font-medium cursor-pointer transition-colors ${
+                      isLive ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-gray-600 text-white hover:bg-gray-700'
                     }`}
                   >
                     {isLive ? (
