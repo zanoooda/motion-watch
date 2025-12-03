@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import List, Optional
 from datetime import datetime, timedelta
+import os
 
 from app.core.database import get_db
 from app.models.models import MotionEvent, Camera
@@ -113,3 +115,39 @@ async def delete_event(event_id: int, db: AsyncSession = Depends(get_db)):
     
     await db.delete(event)
     return {"status": "deleted", "event_id": event_id}
+
+
+@router.get("/{event_id}/snapshot")
+async def get_event_snapshot(event_id: int, db: AsyncSession = Depends(get_db)):
+    """Get the snapshot image for a motion event"""
+    result = await db.execute(select(MotionEvent).where(MotionEvent.id == event_id))
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    
+    if not event.snapshot_path or not os.path.exists(event.snapshot_path):
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    
+    return FileResponse(
+        event.snapshot_path,
+        media_type="image/jpeg",
+        filename=f"snapshot_{event_id}.jpg"
+    )
+
+
+@router.get("/{event_id}/clip")
+async def get_event_clip(event_id: int, db: AsyncSession = Depends(get_db)):
+    """Get the video clip for a motion event"""
+    result = await db.execute(select(MotionEvent).where(MotionEvent.id == event_id))
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    
+    if not event.video_clip_path or not os.path.exists(event.video_clip_path):
+        raise HTTPException(status_code=404, detail="Video clip not found")
+    
+    return FileResponse(
+        event.video_clip_path,
+        media_type="video/mp4",
+        filename=f"clip_{event_id}.mp4"
+    )

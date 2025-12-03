@@ -238,3 +238,44 @@ async def delete_recording(recording_id: int, db: AsyncSession = Depends(get_db)
     
     await db.delete(recording)
     return {"status": "deleted", "recording_id": recording_id}
+
+
+@router.get("/{recording_id}/video")
+async def get_recording_video(recording_id: int, db: AsyncSession = Depends(get_db)):
+    """Stream a recording video"""
+    from fastapi.responses import FileResponse
+    
+    result = await db.execute(select(Recording).where(Recording.id == recording_id))
+    recording = result.scalar_one_or_none()
+    if not recording:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    
+    if not os.path.exists(recording.file_path):
+        raise HTTPException(status_code=404, detail="Recording file not found")
+    
+    return FileResponse(
+        recording.file_path,
+        media_type="video/mp4",
+        filename=os.path.basename(recording.file_path)
+    )
+
+
+@router.get("/{recording_id}/download")
+async def download_recording(recording_id: int, db: AsyncSession = Depends(get_db)):
+    """Download a recording file"""
+    from fastapi.responses import FileResponse
+    
+    result = await db.execute(select(Recording).where(Recording.id == recording_id))
+    recording = result.scalar_one_or_none()
+    if not recording:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    
+    if not os.path.exists(recording.file_path):
+        raise HTTPException(status_code=404, detail="Recording file not found")
+    
+    return FileResponse(
+        recording.file_path,
+        media_type="application/octet-stream",
+        filename=os.path.basename(recording.file_path),
+        headers={"Content-Disposition": f"attachment; filename={os.path.basename(recording.file_path)}"}
+    )

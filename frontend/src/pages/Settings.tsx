@@ -1,28 +1,63 @@
-import { useState } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
-import { Settings as SettingsIcon, HardDrive, Trash2, Bell } from 'lucide-react'
-import { settingsApi } from '../api'
+import { useState, useEffect } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { 
+  Settings as SettingsIcon, 
+  Bell,
+  Save,
+  HardDrive,
+  Trash2,
+  RefreshCw,
+  CheckCircle,
+  XCircle
+} from 'lucide-react'
+import { settingsApi, Settings as SettingsType } from '../api'
 
 function Settings() {
-  const [retentionDays, setRetentionDays] = useState(30)
+  const queryClient = useQueryClient()
+  const [settings, setSettings] = useState<Partial<SettingsType>>({})
+  const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle')
 
-  const { data: settings, isLoading } = useQuery({
+  const { data: currentSettings, isLoading } = useQuery({
     queryKey: ['settings'],
-    queryFn: settingsApi.get,
+    queryFn: settingsApi.getAll,
   })
 
-  const { data: storageInfo } = useQuery({
-    queryKey: ['settings', 'storage'],
-    queryFn: settingsApi.getStorage,
+  const updateMutation = useMutation({
+    mutationFn: settingsApi.update,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings'] })
+    },
   })
 
   const cleanupMutation = useMutation({
-    mutationFn: (days: number) => settingsApi.cleanup(days),
+    mutationFn: settingsApi.cleanupStorage,
   })
 
+  useEffect(() => {
+    if (currentSettings) {
+      setSettings(currentSettings)
+    }
+  }, [currentSettings])
+
+  const handleSave = () => {
+    updateMutation.mutate(settings)
+  }
+
+  const handleTestTelegram = async () => {
+    setTestStatus('testing')
+    try {
+      await settingsApi.testTelegram()
+      setTestStatus('success')
+      setTimeout(() => setTestStatus('idle'), 3000)
+    } catch {
+      setTestStatus('error')
+      setTimeout(() => setTestStatus('idle'), 3000)
+    }
+  }
+
   const handleCleanup = () => {
-    if (confirm(`Удалить записи старше ${retentionDays} дней?`)) {
-      cleanupMutation.mutate(retentionDays)
+    if (confirm('Are you sure you want to clean up old recordings? This cannot be undone.')) {
+      cleanupMutation.mutate()
     }
   }
 
@@ -36,149 +71,247 @@ function Settings() {
 
   return (
     <div>
-      <div className="flex items-center mb-6">
-        <SettingsIcon className="h-8 w-8 text-gray-400 mr-3" />
-        <h1 className="text-2xl font-bold text-gray-900">Настройки</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
+        <button
+          onClick={handleSave}
+          disabled={updateMutation.isPending}
+          className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+        >
+          <Save className="h-5 w-5 mr-2" />
+          {updateMutation.isPending ? 'Saving...' : 'Save Settings'}
+        </button>
       </div>
 
       <div className="space-y-6">
         {/* Telegram Settings */}
-        <div className="bg-white rounded-lg shadow">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <div className="flex items-center">
-              <Bell className="h-5 w-5 text-gray-400 mr-2" />
-              <h2 className="text-lg font-medium text-gray-900">Telegram уведомления</h2>
+        <div className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+            <Bell className="h-5 w-5 mr-2" />
+            Telegram Notifications
+          </h2>
+          
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Bot Token
+              </label>
+              <input
+                type="password"
+                value={settings.telegram_bot_token || ''}
+                onChange={(e) => setSettings({ ...settings, telegram_bot_token: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Get your bot token from @BotFather on Telegram
+              </p>
             </div>
-          </div>
-          <div className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium text-gray-900">Статус</p>
-                <p className="text-sm text-gray-500">
-                  {settings?.telegram_configured
-                    ? 'Telegram бот настроен и готов к отправке уведомлений'
-                    : 'Telegram бот не настроен. Добавьте TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID в .env'}
-                </p>
-              </div>
-              <span
-                className={`px-3 py-1 rounded-full text-sm ${
-                  settings?.telegram_configured
-                    ? 'bg-green-100 text-green-800'
-                    : 'bg-yellow-100 text-yellow-800'
-                }`}
-              >
-                {settings?.telegram_configured ? 'Активен' : 'Не настроен'}
-              </span>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Chat ID
+              </label>
+              <input
+                type="text"
+                value={settings.telegram_chat_id || ''}
+                onChange={(e) => setSettings({ ...settings, telegram_chat_id: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                placeholder="-1001234567890"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Your personal chat ID or group chat ID where notifications will be sent
+              </p>
             </div>
+
+            <div>
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={settings.telegram_enabled || false}
+                  onChange={(e) => setSettings({ ...settings, telegram_enabled: e.target.checked })}
+                  className="h-4 w-4 text-blue-600 rounded"
+                />
+                <span className="ml-2 text-sm text-gray-700">Enable Telegram notifications</span>
+              </label>
+            </div>
+
+            <div>
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={settings.telegram_send_snapshots || false}
+                  onChange={(e) => setSettings({ ...settings, telegram_send_snapshots: e.target.checked })}
+                  className="h-4 w-4 text-blue-600 rounded"
+                />
+                <span className="ml-2 text-sm text-gray-700">Send motion snapshots to Telegram</span>
+              </label>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Default notification cooldown (seconds)
+              </label>
+              <input
+                type="number"
+                value={settings.notification_cooldown || 60}
+                onChange={(e) => setSettings({ ...settings, notification_cooldown: parseInt(e.target.value) })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                min="0"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Minimum time between notifications (per camera). Can be overridden per camera.
+              </p>
+            </div>
+
+            <button
+              onClick={handleTestTelegram}
+              disabled={testStatus === 'testing'}
+              className="inline-flex items-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+            >
+              {testStatus === 'testing' ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Testing...
+                </>
+              ) : testStatus === 'success' ? (
+                <>
+                  <CheckCircle className="h-4 w-4 mr-2 text-green-600" />
+                  Test successful!
+                </>
+              ) : testStatus === 'error' ? (
+                <>
+                  <XCircle className="h-4 w-4 mr-2 text-red-600" />
+                  Test failed
+                </>
+              ) : (
+                <>
+                  <Bell className="h-4 w-4 mr-2" />
+                  Send test notification
+                </>
+              )}
+            </button>
           </div>
         </div>
 
         {/* Storage Settings */}
-        <div className="bg-white rounded-lg shadow">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <div className="flex items-center">
-              <HardDrive className="h-5 w-5 text-gray-400 mr-2" />
-              <h2 className="text-lg font-medium text-gray-900">Хранилище</h2>
+        <div className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+            <HardDrive className="h-5 w-5 mr-2" />
+            Storage Management
+          </h2>
+          
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Recording retention (days)
+              </label>
+              <input
+                type="number"
+                value={settings.retention_days || 7}
+                onChange={(e) => setSettings({ ...settings, retention_days: parseInt(e.target.value) })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                min="1"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Recordings older than this will be automatically deleted
+              </p>
             </div>
-          </div>
-          <div className="p-6 space-y-6">
-            {/* Storage Stats */}
-            {storageInfo && (
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <p className="text-sm text-gray-500">Всего</p>
-                  <p className="text-xl font-semibold text-gray-900">
-                    {storageInfo.total_gb} ГБ
-                  </p>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <p className="text-sm text-gray-500">Использовано</p>
-                  <p className="text-xl font-semibold text-gray-900">
-                    {storageInfo.used_gb} ГБ
-                  </p>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <p className="text-sm text-gray-500">Свободно</p>
-                  <p className="text-xl font-semibold text-gray-900">
-                    {storageInfo.free_gb} ГБ
-                  </p>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <p className="text-sm text-gray-500">Записи</p>
-                  <p className="text-xl font-semibold text-gray-900">
-                    {storageInfo.recordings_used_gb} ГБ
-                  </p>
-                </div>
-              </div>
-            )}
 
-            {/* Storage by camera */}
-            {storageInfo?.cameras && storageInfo.cameras.length > 0 && (
-              <div>
-                <h3 className="text-sm font-medium text-gray-700 mb-2">По камерам</h3>
-                <div className="space-y-2">
-                  {storageInfo.cameras.map((cam: { camera_dir: string; size_gb: number }) => (
-                    <div
-                      key={cam.camera_dir}
-                      className="flex items-center justify-between py-2 border-b border-gray-100"
-                    >
-                      <span className="text-gray-900">{cam.camera_dir}</span>
-                      <span className="text-gray-500">{cam.size_gb} ГБ</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Events retention (days)
+              </label>
+              <input
+                type="number"
+                value={settings.events_retention_days || 30}
+                onChange={(e) => setSettings({ ...settings, events_retention_days: parseInt(e.target.value) })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                min="1"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Motion events older than this will be automatically deleted
+              </p>
+            </div>
 
-            {/* Cleanup */}
-            <div className="border-t pt-6">
-              <h3 className="text-sm font-medium text-gray-700 mb-3">Очистка старых записей</h3>
-              <div className="flex items-end gap-4">
-                <div>
-                  <label className="block text-sm text-gray-500 mb-1">
-                    Удалить записи старше (дней)
-                  </label>
-                  <input
-                    type="number"
-                    value={retentionDays}
-                    onChange={(e) => setRetentionDays(parseInt(e.target.value))}
-                    className="w-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
-                    min="1"
-                  />
-                </div>
-                <button
-                  onClick={handleCleanup}
-                  disabled={cleanupMutation.isPending}
-                  className="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-                >
-                  <Trash2 className="h-5 w-5 mr-2" />
-                  {cleanupMutation.isPending ? 'Очистка...' : 'Очистить'}
-                </button>
-              </div>
-              {cleanupMutation.isSuccess && cleanupMutation.data && (
-                <p className="mt-2 text-sm text-green-600">
-                  Удалено файлов: {cleanupMutation.data.deleted_files}, освобождено: {cleanupMutation.data.freed_gb} ГБ
-                </p>
+            <div>
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={settings.auto_cleanup || false}
+                  onChange={(e) => setSettings({ ...settings, auto_cleanup: e.target.checked })}
+                  className="h-4 w-4 text-blue-600 rounded"
+                />
+                <span className="ml-2 text-sm text-gray-700">Enable automatic cleanup</span>
+              </label>
+            </div>
+
+            <div className="pt-4 border-t">
+              <button
+                onClick={handleCleanup}
+                disabled={cleanupMutation.isPending}
+                className="inline-flex items-center px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 disabled:opacity-50"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                {cleanupMutation.isPending ? 'Cleaning up...' : 'Clean up old recordings now'}
+              </button>
+              {cleanupMutation.isSuccess && (
+                <p className="text-sm text-green-600 mt-2">Cleanup completed successfully</p>
               )}
             </div>
           </div>
         </div>
 
-        {/* System Info */}
-        <div className="bg-white rounded-lg shadow">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-medium text-gray-900">Система</h2>
-          </div>
-          <div className="p-6">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-sm text-gray-500">Всего камер</p>
-                <p className="text-lg font-medium text-gray-900">{settings?.total_cameras || 0}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Активных камер</p>
-                <p className="text-lg font-medium text-gray-900">{settings?.active_cameras || 0}</p>
-              </div>
+        {/* Detection Defaults */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+            <SettingsIcon className="h-5 w-5 mr-2" />
+            Default Detection Settings
+          </h2>
+          <p className="text-sm text-gray-500 mb-4">
+            These settings will be used as defaults for new cameras
+          </p>
+          
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Default sensitivity: {settings.default_sensitivity || 25}%
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={settings.default_sensitivity || 25}
+                onChange={(e) => setSettings({ ...settings, default_sensitivity: parseInt(e.target.value) })}
+                className="w-full"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Default motion cooldown (seconds)
+              </label>
+              <input
+                type="number"
+                value={settings.default_motion_cooldown || 30}
+                onChange={(e) => setSettings({ ...settings, default_motion_cooldown: parseInt(e.target.value) })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                min="0"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Default video clip duration (seconds)
+              </label>
+              <input
+                type="number"
+                value={settings.default_clip_duration || 10}
+                onChange={(e) => setSettings({ ...settings, default_clip_duration: parseInt(e.target.value) })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                min="5"
+                max="120"
+              />
             </div>
           </div>
         </div>

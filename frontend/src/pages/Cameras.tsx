@@ -9,7 +9,8 @@ import {
   Square, 
   Settings,
   Video,
-  Eye
+  Eye,
+  Monitor
 } from 'lucide-react'
 import { camerasApi, Camera as CameraType, CameraCreate } from '../api'
 
@@ -18,12 +19,16 @@ function Cameras() {
   const [newCamera, setNewCamera] = useState<CameraCreate>({
     name: '',
     url: '',
-    recording_enabled: true,
-    audio_enabled: true,
+    recording_enabled: false,
+    audio_enabled: false,
     motion_detection_enabled: true,
     motion_sensitivity: 25,
     motion_min_area: 500,
     motion_cooldown: 30,
+    save_snapshots: true,
+    save_video_clips: false,
+    video_clip_duration: 10,
+    notification_cooldown: 60,
   })
 
   const queryClient = useQueryClient()
@@ -41,12 +46,16 @@ function Cameras() {
       setNewCamera({
         name: '',
         url: '',
-        recording_enabled: true,
-        audio_enabled: true,
+        recording_enabled: false,
+        audio_enabled: false,
         motion_detection_enabled: true,
         motion_sensitivity: 25,
         motion_min_area: 500,
         motion_cooldown: 30,
+        save_snapshots: true,
+        save_video_clips: false,
+        video_clip_duration: 10,
+        notification_cooldown: 60,
       })
     },
   })
@@ -72,7 +81,7 @@ function Cameras() {
   }
 
   const handleDeleteCamera = (id: number) => {
-    if (confirm('Вы уверены что хотите удалить камеру?')) {
+    if (confirm('Are you sure you want to delete this camera?')) {
       deleteMutation.mutate(id)
     }
   }
@@ -98,13 +107,13 @@ function Cameras() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Камеры</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Cameras</h1>
         <button
           onClick={() => setShowAddModal(true)}
           className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
         >
           <Plus className="h-5 w-5 mr-2" />
-          Добавить камеру
+          Add Camera
         </button>
       </div>
 
@@ -115,19 +124,19 @@ function Cameras() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  Камера
+                  Camera
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  Статус
+                  Status
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  Запись
+                  Recording
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  Детекция
+                  Detection
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                  Действия
+                  Actions
                 </th>
               </tr>
             </thead>
@@ -158,12 +167,12 @@ function Cameras() {
                       }`}
                     >
                       {camera.status === 'recording'
-                        ? 'Записывает'
+                        ? 'Recording'
                         : camera.status === 'online'
-                        ? 'Онлайн'
+                        ? 'Online'
                         : camera.status === 'error'
-                        ? 'Ошибка'
-                        : 'Офлайн'}
+                        ? 'Error'
+                        : 'Offline'}
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
@@ -174,7 +183,7 @@ function Cameras() {
                           ? 'bg-green-100 text-green-600 hover:bg-green-200'
                           : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       }`}
-                      title={camera.recording_enabled ? 'Остановить запись' : 'Начать запись'}
+                      title={camera.recording_enabled ? 'Stop recording' : 'Start recording'}
                     >
                       {camera.recording_enabled ? (
                         <Square className="h-5 w-5" />
@@ -193,8 +202,8 @@ function Cameras() {
                       }`}
                       title={
                         camera.motion_detection_enabled
-                          ? 'Отключить детекцию'
-                          : 'Включить детекцию'
+                          ? 'Disable detection'
+                          : 'Enable detection'
                       }
                     >
                       <Eye className="h-5 w-5" />
@@ -204,22 +213,29 @@ function Cameras() {
                     <div className="flex items-center justify-end space-x-2">
                       <Link
                         to={`/cameras/${camera.id}`}
+                        className="p-2 text-gray-600 hover:text-green-600 hover:bg-green-50 rounded"
+                        title="Live View"
+                      >
+                        <Monitor className="h-5 w-5" />
+                      </Link>
+                      <Link
+                        to={`/cameras/${camera.id}/settings`}
                         className="p-2 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded"
-                        title="Настройки"
+                        title="Settings"
                       >
                         <Settings className="h-5 w-5" />
                       </Link>
                       <Link
                         to={`/recordings?camera=${camera.id}`}
                         className="p-2 text-gray-600 hover:text-purple-600 hover:bg-purple-50 rounded"
-                        title="Записи"
+                        title="Recordings"
                       >
                         <Video className="h-5 w-5" />
                       </Link>
                       <button
                         onClick={() => handleDeleteCamera(camera.id)}
                         className="p-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded"
-                        title="Удалить"
+                        title="Delete"
                       >
                         <Trash2 className="h-5 w-5" />
                       </button>
@@ -233,9 +249,9 @@ function Cameras() {
       ) : (
         <div className="bg-white rounded-lg shadow p-12 text-center">
           <Camera className="mx-auto h-12 w-12 text-gray-400" />
-          <h3 className="mt-2 text-lg font-medium text-gray-900">Нет камер</h3>
+          <h3 className="mt-2 text-lg font-medium text-gray-900">No cameras</h3>
           <p className="mt-1 text-gray-500">
-            Добавьте первую камеру для начала работы
+            Add your first camera to get started
           </p>
         </div>
       )}
@@ -250,13 +266,13 @@ function Cameras() {
             />
             <div className="relative bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
               <h2 className="text-xl font-bold text-gray-900 mb-4">
-                Добавить камеру
+                Add Camera
               </h2>
               <form onSubmit={handleCreateCamera}>
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Название
+                      Name
                     </label>
                     <input
                       type="text"
@@ -265,13 +281,13 @@ function Cameras() {
                         setNewCamera({ ...newCamera, name: e.target.value })
                       }
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="Камера во дворе"
+                      placeholder="Front Door Camera"
                       required
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      URL потока
+                      Stream URL
                     </label>
                     <input
                       type="text"
@@ -280,63 +296,106 @@ function Cameras() {
                         setNewCamera({ ...newCamera, url: e.target.value })
                       }
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="rtsp://user:pass@192.168.1.100:554/stream"
+                      placeholder="rtsp://user:pass@192.168.1.100:554/stream or /dev/video0"
                       required
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={newCamera.recording_enabled}
-                        onChange={(e) =>
-                          setNewCamera({
-                            ...newCamera,
-                            recording_enabled: e.target.checked,
-                          })
-                        }
-                        className="h-4 w-4 text-blue-600 rounded"
-                      />
-                      <span className="ml-2 text-sm text-gray-700">
-                        Включить запись
-                      </span>
-                    </label>
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={newCamera.audio_enabled}
-                        onChange={(e) =>
-                          setNewCamera({
-                            ...newCamera,
-                            audio_enabled: e.target.checked,
-                          })
-                        }
-                        className="h-4 w-4 text-blue-600 rounded"
-                      />
-                      <span className="ml-2 text-sm text-gray-700">
-                        Записывать аудио
-                      </span>
-                    </label>
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={newCamera.motion_detection_enabled}
-                        onChange={(e) =>
-                          setNewCamera({
-                            ...newCamera,
-                            motion_detection_enabled: e.target.checked,
-                          })
-                        }
-                        className="h-4 w-4 text-blue-600 rounded"
-                      />
-                      <span className="ml-2 text-sm text-gray-700">
-                        Детекция движения
-                      </span>
-                    </label>
+
+                  <div className="border-t pt-4">
+                    <h4 className="font-medium text-gray-900 mb-2">Detection Settings</h4>
+                    <div className="space-y-3">
+                      <label className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={newCamera.motion_detection_enabled}
+                          onChange={(e) =>
+                            setNewCamera({
+                              ...newCamera,
+                              motion_detection_enabled: e.target.checked,
+                            })
+                          }
+                          className="h-4 w-4 text-blue-600 rounded"
+                        />
+                        <span className="ml-2 text-sm text-gray-700">
+                          Enable motion detection
+                        </span>
+                      </label>
+                      <label className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={newCamera.save_snapshots}
+                          onChange={(e) =>
+                            setNewCamera({
+                              ...newCamera,
+                              save_snapshots: e.target.checked,
+                            })
+                          }
+                          className="h-4 w-4 text-blue-600 rounded"
+                        />
+                        <span className="ml-2 text-sm text-gray-700">
+                          Save snapshots on motion
+                        </span>
+                      </label>
+                      <label className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={newCamera.save_video_clips}
+                          onChange={(e) =>
+                            setNewCamera({
+                              ...newCamera,
+                              save_video_clips: e.target.checked,
+                            })
+                          }
+                          className="h-4 w-4 text-blue-600 rounded"
+                        />
+                        <span className="ml-2 text-sm text-gray-700">
+                          Save video clips on motion (with audio)
+                        </span>
+                      </label>
+                    </div>
                   </div>
+
+                  <div className="border-t pt-4">
+                    <h4 className="font-medium text-gray-900 mb-2">Recording Settings</h4>
+                    <div className="space-y-3">
+                      <label className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={newCamera.recording_enabled}
+                          onChange={(e) =>
+                            setNewCamera({
+                              ...newCamera,
+                              recording_enabled: e.target.checked,
+                            })
+                          }
+                          className="h-4 w-4 text-blue-600 rounded"
+                        />
+                        <span className="ml-2 text-sm text-gray-700">
+                          Continuous recording
+                        </span>
+                      </label>
+                      <label className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={newCamera.audio_enabled}
+                          onChange={(e) =>
+                            setNewCamera({
+                              ...newCamera,
+                              audio_enabled: e.target.checked,
+                            })
+                          }
+                          className="h-4 w-4 text-blue-600 rounded"
+                        />
+                        <span className="ml-2 text-sm text-gray-700">
+                          Record audio
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Чувствительность: {newCamera.motion_sensitivity}%
+                      Sensitivity: {newCamera.motion_sensitivity}%
                     </label>
                     <input
                       type="range"
@@ -354,20 +413,23 @@ function Cameras() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Cooldown между уведомлениями (сек)
+                      Notification cooldown (seconds)
                     </label>
                     <input
                       type="number"
-                      value={newCamera.motion_cooldown}
+                      value={newCamera.notification_cooldown}
                       onChange={(e) =>
                         setNewCamera({
                           ...newCamera,
-                          motion_cooldown: parseInt(e.target.value),
+                          notification_cooldown: parseInt(e.target.value),
                         })
                       }
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
                       min="0"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Minimum time between Telegram notifications
+                    </p>
                   </div>
                 </div>
                 <div className="mt-6 flex justify-end space-x-3">
@@ -376,14 +438,14 @@ function Cameras() {
                     onClick={() => setShowAddModal(false)}
                     className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
                   >
-                    Отмена
+                    Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={createMutation.isPending}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                   >
-                    {createMutation.isPending ? 'Добавление...' : 'Добавить'}
+                    {createMutation.isPending ? 'Adding...' : 'Add Camera'}
                   </button>
                 </div>
               </form>

@@ -33,6 +33,18 @@ CHANNEL_NOTIFICATIONS = "notifications"
 
 shutdown_event = asyncio.Event()
 
+# Sync Redis client for use in threads
+_redis_sync = None
+
+
+def get_sync_redis():
+    """Get synchronous Redis client for threads"""
+    global _redis_sync
+    if _redis_sync is None:
+        import redis as sync_redis
+        _redis_sync = sync_redis.from_url(REDIS_URL, decode_responses=False)
+    return _redis_sync
+
 
 class MotionDetector:
     """
@@ -47,7 +59,11 @@ class MotionDetector:
         sensitivity: float = 25.0,
         min_area: int = 500,
         cooldown: int = 30,
-        detection_zones: Optional[list] = None
+        detection_zones: Optional[list] = None,
+        save_snapshots: bool = True,
+        save_video_clips: bool = False,
+        video_clip_duration: int = 10,
+        audio_enabled: bool = True
     ):
         self.camera_id = camera_id
         self.url = url
@@ -55,6 +71,10 @@ class MotionDetector:
         self.min_area = min_area
         self.cooldown = cooldown
         self.detection_zones = detection_zones
+        self.save_snapshots = save_snapshots
+        self.save_video_clips = save_video_clips
+        self.video_clip_duration = video_clip_duration
+        self.audio_enabled = audio_enabled
         
         # State
         self.running = False
@@ -62,6 +82,8 @@ class MotionDetector:
         self.capture = None
         self.thread = None
         self.event_queue: Queue = Queue()
+        self.last_frame = None  # For live view
+        self.recording_clip = False  # Currently recording clip
         
         # Background subtractor - MOG2 is efficient on CPU
         self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
@@ -200,6 +222,10 @@ class MotionDetector:
         """Process a single frame for motion detection"""
         self.frame_count += 1
         
+        # Store last frame for live view (cache in Redis)
+        self.last_frame = frame
+        self._cache_snapshot(frame)
+        
         # Skip frames for performance
         if self.frame_count % self.skip_frames != 0:
             return
@@ -214,18 +240,123 @@ class MotionDetector:
             if current_time - self.last_motion_time >= self.cooldown:
                 self.last_motion_time = current_time
                 
-                # Save snapshot
-                snapshot_path = self._save_snapshot(frame, contours)
+                snapshot_path = None
+                video_clip_path = None
+                
+                # Save snapshot if enabled
+                if self.save_snapshots:
+                    snapshot_path = self._save_snapshot(frame, contours)
+                
+                # Start video clip recording if enabled
+                if self.save_video_clips and not self.recording_clip:
+                    video_clip_path = self._start_video_clip()
                 
                 # Queue motion event
                 self.event_queue.put({
                     "camera_id": self.camera_id,
                     "timestamp": datetime.now().isoformat(),
                     "confidence": confidence,
-                    "snapshot_path": snapshot_path
+                    "snapshot_path": snapshot_path,
+                    "video_clip_path": video_clip_path
                 })
                 
                 logger.info(f"Motion detected on camera {self.camera_id}, confidence: {confidence:.2f}")
+    
+    def _cache_snapshot(self, frame: np.ndarray):
+        """Cache current frame in Redis for live view"""
+        try:
+            # Encode frame as JPEG
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            
+            # Cache in Redis with 2 second expiry
+            redis_client = get_sync_redis()
+            redis_client.setex(f"snapshot:{self.camera_id}", 2, buffer.tobytes())
+        except Exception as e:
+            # Don't log every frame to avoid spam
+            pass
+    
+    def _start_video_clip(self) -> Optional[str]:
+        """Start recording a video clip with audio"""
+        if self.recording_clip:
+            return None
+        
+        self.recording_clip = True
+        
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        time_str = datetime.now().strftime("%H-%M-%S")
+        
+        clip_dir = os.path.join(STORAGE_PATH, f"camera_{self.camera_id}", date_str, "clips")
+        os.makedirs(clip_dir, exist_ok=True)
+        
+        clip_path = os.path.join(clip_dir, f"motion_{time_str}.mp4")
+        
+        # Start FFmpeg to record clip in background
+        threading.Thread(
+            target=self._record_video_clip,
+            args=(clip_path,),
+            daemon=True
+        ).start()
+        
+        return clip_path
+    
+    def _record_video_clip(self, output_path: str):
+        """Record video clip using FFmpeg"""
+        try:
+            duration = self.video_clip_duration
+            
+            # Build FFmpeg command based on source type
+            if self.url.startswith('/dev/video'):
+                # Local camera - record with audio if enabled
+                if self.audio_enabled:
+                    cmd = [
+                        'ffmpeg', '-y',
+                        '-f', 'v4l2', '-i', self.url,
+                        '-f', 'alsa', '-i', 'default',
+                        '-t', str(duration),
+                        '-c:v', 'libx264', '-preset', 'ultrafast',
+                        '-c:a', 'aac', '-b:a', '128k',
+                        output_path
+                    ]
+                else:
+                    cmd = [
+                        'ffmpeg', '-y',
+                        '-f', 'v4l2', '-i', self.url,
+                        '-t', str(duration),
+                        '-c:v', 'libx264', '-preset', 'ultrafast',
+                        '-an',
+                        output_path
+                    ]
+            else:
+                # RTSP stream
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-rtsp_transport', 'tcp',
+                    '-i', self.url,
+                    '-t', str(duration),
+                    '-c:v', 'libx264', '-preset', 'ultrafast',
+                    '-c:a', 'aac' if self.audio_enabled else '-an',
+                    output_path
+                ]
+            
+            logger.info(f"Recording {duration}s video clip for camera {self.camera_id}")
+            
+            process = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=duration + 10
+            )
+            
+            if process.returncode == 0:
+                logger.info(f"Video clip saved: {output_path}")
+            else:
+                logger.error(f"Failed to save video clip: {process.stderr.decode()[:200]}")
+                
+        except subprocess.TimeoutExpired:
+            logger.error(f"Video clip recording timed out for camera {self.camera_id}")
+        except Exception as e:
+            logger.error(f"Error recording video clip: {e}")
+        finally:
+            self.recording_clip = False
     
     def _detect_motion(self, frame: np.ndarray) -> Tuple[bool, float, list]:
         """
@@ -414,6 +545,14 @@ async def handle_control_message(message: dict, detectors: Dict[int, MotionDetec
                 detector.min_area = changes["motion_min_area"]
             if "motion_cooldown" in changes:
                 detector.cooldown = changes["motion_cooldown"]
+            if "save_snapshots" in changes:
+                detector.save_snapshots = changes["save_snapshots"]
+            if "save_video_clips" in changes:
+                detector.save_video_clips = changes["save_video_clips"]
+            if "video_clip_duration" in changes:
+                detector.video_clip_duration = changes["video_clip_duration"]
+            if "audio_enabled" in changes:
+                detector.audio_enabled = changes["audio_enabled"]
             if "url" in changes:
                 detector.stop()
                 detector.url = changes["url"]
@@ -502,7 +641,11 @@ async def init_detectors() -> Dict[int, MotionDetector]:
                 url=camera["url"],
                 sensitivity=camera.get("motion_sensitivity", 25.0),
                 min_area=camera.get("motion_min_area", 500),
-                cooldown=camera.get("motion_cooldown", 30)
+                cooldown=camera.get("motion_cooldown", 30),
+                save_snapshots=camera.get("save_snapshots", True),
+                save_video_clips=camera.get("save_video_clips", False),
+                video_clip_duration=camera.get("video_clip_duration", 10),
+                audio_enabled=camera.get("audio_enabled", True)
             )
             detectors[camera["id"]] = detector
             detector.start()

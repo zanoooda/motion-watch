@@ -1,12 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 from typing import List
 import json
+import os
+import subprocess
+import tempfile
+from pathlib import Path
 
 from app.core.database import get_db
-from app.core.redis import publish_event, CHANNEL_CAMERA_CONTROL
+from app.core.redis import publish_event, CHANNEL_CAMERA_CONTROL, get_redis
 from app.models.models import Camera, CameraStatus
 from app.schemas.schemas import (
     CameraCreate, CameraUpdate, CameraResponse, CameraControlRequest
@@ -140,12 +145,79 @@ async def control_camera(
 
 @router.get("/{camera_id}/snapshot")
 async def get_camera_snapshot(camera_id: int, db: AsyncSession = Depends(get_db)):
-    """Get current snapshot from camera"""
+    """Get current snapshot from camera - returns JPEG image"""
     result = await db.execute(select(Camera).where(Camera.id == camera_id))
     camera = result.scalar_one_or_none()
     if not camera:
         raise HTTPException(status_code=404, detail="Camera not found")
     
-    # This will be handled by the recorder service
-    # For now, return the camera URL for direct streaming
-    return {"camera_id": camera_id, "stream_url": f"/api/stream/{camera_id}"}
+    # Try to get cached snapshot from Redis first
+    redis = await get_redis()
+    cached_snapshot = await redis.get(f"snapshot:{camera_id}")
+    
+    if cached_snapshot:
+        return StreamingResponse(
+            iter([cached_snapshot]),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+        )
+    
+    # Otherwise capture a snapshot using FFmpeg
+    try:
+        # Create temp file for snapshot
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+            tmp_path = tmp.name
+        
+        # Build FFmpeg command based on camera URL
+        url = camera.url
+        if url.startswith('/dev/'):
+            # Local video device
+            ffmpeg_cmd = [
+                'ffmpeg', '-y',
+                '-f', 'v4l2',
+                '-i', url,
+                '-frames:v', '1',
+                '-q:v', '2',
+                tmp_path
+            ]
+        else:
+            # RTSP or HTTP stream
+            ffmpeg_cmd = [
+                'ffmpeg', '-y',
+                '-rtsp_transport', 'tcp',
+                '-i', url,
+                '-frames:v', '1',
+                '-q:v', '2',
+                tmp_path
+            ]
+        
+        # Run FFmpeg
+        process = subprocess.run(
+            ffmpeg_cmd,
+            capture_output=True,
+            timeout=5
+        )
+        
+        if process.returncode != 0 or not os.path.exists(tmp_path):
+            raise HTTPException(status_code=500, detail="Failed to capture snapshot")
+        
+        # Read and return the image
+        with open(tmp_path, 'rb') as f:
+            image_data = f.read()
+        
+        # Cache in Redis for 1 second
+        await redis.setex(f"snapshot:{camera_id}", 1, image_data)
+        
+        # Clean up temp file
+        os.unlink(tmp_path)
+        
+        return StreamingResponse(
+            iter([image_data]),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+        )
+        
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Snapshot capture timed out")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Snapshot capture failed: {str(e)}")

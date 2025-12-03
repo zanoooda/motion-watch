@@ -24,14 +24,20 @@ class Camera(Base):
     is_enabled = Column(Boolean, default=True)
     
     # Recording settings
-    recording_enabled = Column(Boolean, default=True)
+    recording_enabled = Column(Boolean, default=False)
     audio_enabled = Column(Boolean, default=True)
     
     # Motion detection settings
     motion_detection_enabled = Column(Boolean, default=True)
     motion_sensitivity = Column(Float, default=25.0)  # Threshold for motion (0-100)
     motion_min_area = Column(Integer, default=500)    # Minimum contour area
-    motion_cooldown = Column(Integer, default=30)     # Seconds between notifications
+    motion_cooldown = Column(Integer, default=30)     # Seconds between motion detections
+    
+    # New: Snapshot and video clip settings
+    save_snapshots = Column(Boolean, default=True)           # Save snapshots on motion
+    save_video_clips = Column(Boolean, default=False)        # Save video clips on motion (with audio)
+    video_clip_duration = Column(Integer, default=10)        # Duration of video clips in seconds
+    notification_cooldown = Column(Integer, default=60)      # Seconds between Telegram notifications
     
     # Detection zones (JSON format: [[x1,y1,x2,y2], ...])
     detection_zones = Column(Text, nullable=True)

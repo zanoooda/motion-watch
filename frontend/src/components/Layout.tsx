@@ -11,11 +11,11 @@ import {
 import { useState } from 'react'
 
 const navigation = [
-  { name: 'Дашборд', href: '/', icon: LayoutDashboard },
-  { name: 'Камеры', href: '/cameras', icon: Camera },
-  { name: 'События', href: '/events', icon: Bell },
-  { name: 'Записи', href: '/recordings', icon: Video },
-  { name: 'Настройки', href: '/settings', icon: Settings },
+  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Cameras', href: '/cameras', icon: Camera },
+  { name: 'Events', href: '/events', icon: Bell },
+  { name: 'Recordings', href: '/recordings', icon: Video },
+  { name: 'Settings', href: '/settings', icon: Settings },
 ]
 
 function Layout() {
@@ -99,13 +99,13 @@ function Layout() {
             <button onClick={() => setSidebarOpen(true)} className="text-gray-500 hover:text-gray-900">
               <Menu size={24} />
             </button>
-            <span className="text-lg font-semibold">Motion Watch</span>
+            <span className="text-lg font-semibold text-gray-900">Motion Watch</span>
             <div className="w-6" />
           </div>
         </div>
 
         {/* Page content */}
-        <main className="flex-1 p-4 lg:p-8">
+        <main className="flex-1 p-4 lg:p-6">
           <Outlet />
         </main>
       </div>

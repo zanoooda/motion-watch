@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { Camera, Bell, HardDrive, Activity } from 'lucide-react'
+import { Camera, Bell, HardDrive, Activity, Play } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { camerasApi, eventsApi, settingsApi } from '../api'
 
 function Dashboard() {
@@ -20,25 +21,25 @@ function Dashboard() {
 
   const stats = [
     {
-      name: 'Всего камер',
+      name: 'Total Cameras',
       value: cameras?.length || 0,
       icon: Camera,
       color: 'bg-blue-500',
     },
     {
-      name: 'Активных камер',
+      name: 'Active Cameras',
       value: cameras?.filter(c => c.status === 'recording' || c.status === 'online').length || 0,
       icon: Activity,
       color: 'bg-green-500',
     },
     {
-      name: 'Событий за 24ч',
+      name: 'Events (24h)',
       value: recentEvents?.length || 0,
       icon: Bell,
       color: 'bg-yellow-500',
     },
     {
-      name: 'Использовано (ГБ)',
+      name: 'Storage Used (GB)',
       value: settings?.storage_used_gb?.toFixed(1) || '0',
       icon: HardDrive,
       color: 'bg-purple-500',
@@ -55,7 +56,7 @@ function Dashboard() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Дашборд</h1>
+      <h1 className="text-2xl font-bold text-gray-900 mb-6">Dashboard</h1>
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -74,18 +75,19 @@ function Dashboard() {
         ))}
       </div>
 
-      {/* Camera Grid */}
+      {/* Camera Grid with Live Preview */}
       <div className="bg-white rounded-lg shadow">
         <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-lg font-medium text-gray-900">Камеры</h2>
+          <h2 className="text-lg font-medium text-gray-900">Cameras</h2>
         </div>
         <div className="p-6">
           {cameras && cameras.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {cameras.map((camera) => (
-                <div
+                <Link
                   key={camera.id}
-                  className="border rounded-lg p-4 hover:border-blue-500 transition-colors"
+                  to={`/cameras/${camera.id}`}
+                  className="border rounded-lg p-4 hover:border-blue-500 transition-colors block"
                 >
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="font-medium text-gray-900">{camera.name}</h3>
@@ -101,35 +103,58 @@ function Dashboard() {
                       }`}
                     >
                       {camera.status === 'recording'
-                        ? 'Записывает'
+                        ? 'Recording'
                         : camera.status === 'online'
-                        ? 'Онлайн'
+                        ? 'Online'
                         : camera.status === 'error'
-                        ? 'Ошибка'
-                        : 'Офлайн'}
+                        ? 'Error'
+                        : 'Offline'}
                     </span>
                   </div>
-                  <div className="aspect-video bg-gray-200 rounded mb-2 flex items-center justify-center">
-                    <Camera className="h-12 w-12 text-gray-400" />
+                  <div className="aspect-video bg-gray-900 rounded mb-2 flex items-center justify-center relative overflow-hidden">
+                    {camera.status !== 'offline' ? (
+                      <>
+                        <img
+                          src={`/api/cameras/${camera.id}/snapshot`}
+                          alt={camera.name}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            const target = e.target as HTMLImageElement
+                            target.style.display = 'none'
+                          }}
+                        />
+                        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 opacity-0 hover:opacity-100 transition-opacity">
+                          <Play className="h-12 w-12 text-white" />
+                        </div>
+                      </>
+                    ) : (
+                      <Camera className="h-12 w-12 text-gray-600" />
+                    )}
                   </div>
                   <div className="text-sm text-gray-500">
                     <p>
-                      Детекция: {camera.motion_detection_enabled ? 'Вкл' : 'Выкл'}
+                      Detection: {camera.motion_detection_enabled ? 'On' : 'Off'}
                     </p>
                     <p>
-                      Запись: {camera.recording_enabled ? 'Вкл' : 'Выкл'}
+                      Recording: {camera.recording_enabled ? 'On' : 'Off'}
                     </p>
                   </div>
-                </div>
+                </Link>
               ))}
             </div>
           ) : (
             <div className="text-center py-12">
               <Camera className="mx-auto h-12 w-12 text-gray-400" />
-              <h3 className="mt-2 text-sm font-medium text-gray-900">Нет камер</h3>
+              <h3 className="mt-2 text-sm font-medium text-gray-900">No cameras</h3>
               <p className="mt-1 text-sm text-gray-500">
-                Добавьте первую камеру для начала работы
+                Add your first camera to get started
               </p>
+              <Link
+                to="/cameras"
+                className="mt-4 inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                Add Camera
+              </Link>
             </div>
           )}
         </div>
@@ -139,7 +164,7 @@ function Dashboard() {
       {recentEvents && recentEvents.length > 0 && (
         <div className="bg-white rounded-lg shadow mt-6">
           <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-lg font-medium text-gray-900">Последние события</h2>
+            <h2 className="text-lg font-medium text-gray-900">Recent Events</h2>
           </div>
           <div className="divide-y divide-gray-200">
             {recentEvents.slice(0, 5).map((event) => (
@@ -147,16 +172,18 @@ function Dashboard() {
                 <Bell className="h-5 w-5 text-yellow-500 mr-3" />
                 <div className="flex-1">
                   <p className="text-sm font-medium text-gray-900">
-                    Движение обнаружено (Камера {event.camera_id})
+                    Motion detected (Camera {event.camera_id})
                   </p>
                   <p className="text-sm text-gray-500">
-                    {new Date(event.timestamp).toLocaleString('ru-RU')}
+                    {new Date(event.timestamp).toLocaleString()}
                   </p>
                 </div>
-                {event.confidence && (
-                  <span className="text-sm text-gray-500">
-                    {event.confidence.toFixed(1)}%
-                  </span>
+                {event.snapshot_path && (
+                  <img
+                    src={`/api/snapshots/${event.id}`}
+                    alt="Snapshot"
+                    className="h-12 w-16 object-cover rounded"
+                  />
                 )}
               </div>
             ))}
